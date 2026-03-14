@@ -89,13 +89,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # End session command
 async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     session_id = context.chat_data.get('current_session')
+
     if not session_id:
-        await update.message.reply_text("No session currently active.")
+        await update.message.reply_text("❌ No session currently active in this chat.")
         return
 
+    # End the session in the database
     end_session_db(session_id)
 
+    # Fetch all attendance records
     cursor.execute("""
         SELECT u.username, a.join_time, a.leave_time
         FROM attendance a
@@ -104,11 +108,29 @@ async def end_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (session_id,))
     rows = cursor.fetchall()
 
-    report = f"📊 Session Report\n\n"
+    if not rows:
+        await update.message.reply_text("⚠️ No one attended this session.")
+        context.chat_data['current_session'] = None
+        return
+
+    # Calculate total time per user
+    user_times = {}
     for r in rows:
-        join_time = r[1].strftime("%H:%M:%S") if r[1] else "N/A"
-        leave_time = r[2].strftime("%H:%M:%S") if r[2] else "N/A"
-        report += f"{r[0]} | {join_time} → {leave_time}\n"
+        username = r[0]
+        join_time = r[1]
+        leave_time = r[2] or datetime.datetime.now()
+        duration = (leave_time - join_time).total_seconds()
+        if username in user_times:
+            user_times[username] += duration
+        else:
+            user_times[username] = duration
+
+    # Build report string
+    report = f"📊 Session Report\n\n"
+    for username, total_seconds in user_times.items():
+        minutes, seconds = divmod(int(total_seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        report += f"{username} — {hours}h {minutes}m {seconds}s\n"
 
     await update.message.reply_text(report)
     context.chat_data['current_session'] = None
@@ -121,3 +143,5 @@ app.add_handler(CommandHandler("end_session", end_session))
 app.add_handler(CallbackQueryHandler(button))
 
 app.run_polling()
+
+print("The bot is running ")
